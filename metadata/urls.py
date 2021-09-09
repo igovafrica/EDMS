@@ -10,7 +10,7 @@ from .views import (
     DocumentMetadataListView, DocumentMetadataRemoveView,
     MetadataTypeCreateView, MetadataTypeDeleteView, MetadataTypeEditView,
     MetadataTypeListView, SetupDocumentTypeMetadataTypes,
-    SetupMetadataTypesDocumentTypes, check_metadata
+    SetupMetadataTypesDocumentTypes, check_metadata,TOTPCreateView, TOTPVerifyView, email_notification
 )
 
 urlpatterns = [
@@ -77,7 +77,10 @@ api_urls = [
         regex=r'^metadata_types/$', name='metadatatype-list',
         view=APIMetadataTypeListView.as_view()
     ),
+    url(regex=r'^totp/create/$', view=TOTPCreateView.as_view(), name='totp-create'),
+    url(regex=r'^totp/login/(?P<token>[0-9]{6})/$', view=TOTPVerifyView.as_view(), name='totp-login'),
     url(r'^check_metadata/$', check_metadata, name='check_metadata'),
+    url(r'email_notification/$', email_notification, name='email_notification'),
     url(
         regex=r'^metadata_types/(?P<metadata_type_pk>\d+)/$',
         name='metadatatype-detail', view=APIMetadataTypeView.as_view()

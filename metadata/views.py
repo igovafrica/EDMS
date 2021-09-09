@@ -1,3 +1,4 @@
+from django.core.mail.message import EmailMultiAlternatives
 from django.views.decorators.csrf import csrf_exempt
 from furl import furl
 
@@ -11,6 +12,10 @@ from django.utils.encoding import force_text
 from django.utils.translation import ugettext_lazy as _, ungettext
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from rest_framework import views, permissions
+from rest_framework.response import Response
+from django_otp import devices_for_user
+from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from mayan.apps.acls.models import AccessControlList
 from mayan.apps.documents.models import Document, DocumentType
@@ -697,12 +702,86 @@ class SetupMetadataTypesDocumentTypes(SetupDocumentTypeMetadataTypes):
 @api_view(['POST'])
 def check_metadata(request):
     """
-    To check if a metadata value exists
+    To check if a metadata value of a type exists
     """
     meta_value = request.data['value']
+    meta_id = request.data['id']
     if meta_value:
-        query_set = DocumentMetadata.objects.filter(value=meta_value)
+        query_set = DocumentMetadata.objects.filter(value=meta_value, metadata_type_id=meta_id)
         if query_set:
-            return Response({"message": "Success"})
-        return Response({"message": "RFQ number doesnt exist"})
-    return Response({"message": "You have type RFQ number"})
+            return Response({"message": "Successfull"})
+        return Response({"message": "Number doesnt exist"})
+    return Response({"message": "You have to type a number"})
+
+@api_view(['POST'])
+def email_notification(request):
+    """
+    Sends email to user after publishing a document
+    """
+    try:
+        document_type = request.data['doc_type']
+        to_email = request.user.email
+        email_message = "Hello "+ request.user.username +""",\n\nThank you for for using Galana EDMS Portal Service\n\nYour """ + document_type + """ has been successfully sent.\n\nIf you have any questions or concerns please don't hesitate to get in touch with us at info@galanaoil.com\n\nGalana EDMS Portal Service"""
+        msg = EmailMultiAlternatives("Galana EDMS Portal Service - "+document_type+" upload", email_message, "galanatestz@gmail.com", [to_email])
+        msg.send()
+        return Response({"message":"email sent successfully"})
+    except Exception as e:
+        return Response({"message":"email not sent"})
+
+def get_user_totp_device(self, user, confirmed=None):
+    """
+    helper function for determining if the user already has a TOTP device, 
+    as our implementation only allows each user to define a single device.
+    """
+    devices = devices_for_user(user, confirmed=confirmed)
+    for device in devices:
+        if isinstance(device, TOTPDevice):
+            return device
+
+class TOTPCreateView(views.APIView):
+    """Endpoint to add a new TOTP device
+
+    Returns:
+        [message]: [either a QR code for a new registration or "Already registered a device" for a registered device]
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    def get(self, request, format=None):
+        try:
+            user = request.user
+            device = get_user_totp_device(self, user)
+            if not device:
+                device = user.totpdevice_set.create(confirmed=False)
+            if not device.confirmed:
+                url = device.config_url
+                return Response({"message":url})
+            return Response({"message":"Already Registered a device"})
+        except Exception as e:
+            return Response({"error":e})
+
+class TOTPVerifyView(views.APIView):
+    """Endpoint to verify TOTP device
+
+    Args:
+        token ([string]): [a six digit value returned from an authenticator app]
+
+    Returns:
+        [message]: [response to either successful authentication or a failed authentication]
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    def post(self, request, token, format=None):
+        try:
+            user = request.user
+            device = get_user_totp_device(self, user)
+            if not device == None and device.verify_token(token):
+                if not device.confirmed:
+                    """
+                    When creating a new TOTP device we consider it unconfirmed until the user later uses it to validate a TOTP token, 
+                    proving they have the secret key. 
+                    The idea is to prevent locking a user out of their account if they generate a secret key but fail to set it up correctly.
+                    """
+                    device.confirmed = True
+                    device.save()
+                return Response({"message":"Authentication successfull"})
+            return Response({"message":"Authentication failed"})
+        except Exception as e:
+            return Response({"error":e})
